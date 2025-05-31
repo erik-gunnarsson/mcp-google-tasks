@@ -2,3 +2,40 @@ node_modules/
 build/
 *.log
 .env*
+
+# Security: Additional sensitive files to ignore
+credentials.json
+token.json
+service-account-key.json
+google-credentials.json
+secrets/
+.secrets/
+
+# OS and Editor files
+.DS_Store
+.vscode/settings.json
+.idea/
+*.swp
+*.swo
+*~
+
+# Temporary files
+tmp/
+temp/
+.tmp/
+
+# Coverage and test files
+coverage/
+.nyc_output/
+.coverage/
+
+# npm debug logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Runtime data
+pids
+*.pid
+*.seed
+*.pid.lock

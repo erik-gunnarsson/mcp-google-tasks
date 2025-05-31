@@ -14,7 +14,11 @@
     "build": "tsc && node -e \"require('fs').chmodSync('build/index.js', '755')\"",
     "prepare": "npm run build",
     "watch": "tsc --watch",
-    "inspector": "npx @modelcontextprotocol/inspector build/index.js"
+    "inspector": "npx @modelcontextprotocol/inspector build/index.js",
+    "audit": "npm audit",
+    "audit:fix": "npm audit fix",
+    "security:check": "npm audit && npm outdated",
+    "security:update": "npm update && npm audit fix"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^0.6.0",

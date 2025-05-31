@@ -16,6 +16,17 @@ dotenv.config();
 
 const { OAuth2 } = google.auth;
 
+// Security: Validate environment variables
+if (!process.env.CLIENT_ID || !process.env.CLIENT_SECRET || !process.env.REDIRECT_URI) {
+  console.error("Missing required environment variables: CLIENT_ID, CLIENT_SECRET, REDIRECT_URI");
+  process.exit(1);
+}
+
+if (!process.env.ACCESS_TOKEN || !process.env.REFRESH_TOKEN) {
+  console.error("Missing required authentication tokens: ACCESS_TOKEN, REFRESH_TOKEN");
+  process.exit(1);
+}
+
 const GOOGLE_TASKS_API_VERSION = "v1";
 const oAuth2Client = new OAuth2(
   process.env.CLIENT_ID,
@@ -33,6 +44,15 @@ const tasks = google.tasks({
   auth: oAuth2Client,
 });
 
+// Security: Add input length limits to prevent DoS attacks
+const MAX_TITLE_LENGTH = 256;
+const MAX_NOTES_LENGTH = 8192;
+const MAX_TASK_ID_LENGTH = 256;
+
+// Security: Validate allowed task status values
+const VALID_TASK_STATUSES = ['needsAction', 'completed'] as const;
+type TaskStatus = typeof VALID_TASK_STATUSES[number];
+
 interface CreateTaskArgs {
   title: string;
   notes?: string;
@@ -40,18 +60,103 @@ interface CreateTaskArgs {
   status?: string;
 }
 
-// Type guard for CreateTaskArgs
+interface DeleteTaskArgs {
+  taskId: string;
+}
+
+interface CompleteTaskArgs {
+  taskId: string;
+  status?: string;
+}
+
+// Security: Add input sanitization function
+function sanitizeString(input: string): string {
+  if (typeof input !== 'string') {
+    throw new Error('Input must be a string');
+  }
+  // Remove potentially dangerous characters and normalize whitespace
+  return input.trim().replace(/[\x00-\x1F\x7F]/g, '');
+}
+
+// Security: Validate task status
+function isValidTaskStatus(status: string): status is TaskStatus {
+  return VALID_TASK_STATUSES.includes(status as TaskStatus);
+}
+
+// Type guard for CreateTaskArgs with enhanced security validation
 export function isValidCreateTaskArgs(args: any): args is CreateTaskArgs {
+  if (typeof args !== "object" || args === null) {
+    return false;
+  }
+
+  // Validate title
+  if (args.title !== undefined) {
+    if (typeof args.title !== "string" || args.title.length > MAX_TITLE_LENGTH) {
+      return false;
+    }
+  }
+
+  // Validate notes
+  if (args.notes !== undefined) {
+    if (typeof args.notes !== "string" || args.notes.length > MAX_NOTES_LENGTH) {
+      return false;
+    }
+  }
+
+  // Validate taskId
+  if (args.taskId !== undefined) {
+    if (typeof args.taskId !== "string" || args.taskId.length > MAX_TASK_ID_LENGTH) {
+      return false;
+    }
+  }
+
+  // Validate status
+  if (args.status !== undefined) {
+    if (typeof args.status !== "string" || !isValidTaskStatus(args.status)) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+// Security: Add specific validation for delete task args
+function isValidDeleteTaskArgs(args: any): args is DeleteTaskArgs {
   return (
     typeof args === "object" &&
     args !== null &&
-    (args.title === undefined || typeof args.title === "string") &&
-    (args.notes === undefined || typeof args.notes === "string") &&
-    (args.taskId === undefined || typeof args.taskId === "string") &&
-    (args.status === undefined || typeof args.status === "string")
+    typeof args.taskId === "string" &&
+    args.taskId.length > 0 &&
+    args.taskId.length <= MAX_TASK_ID_LENGTH
   );
 }
 
+// Security: Add specific validation for complete task args
+function isValidCompleteTaskArgs(args: any): args is CompleteTaskArgs {
+  if (typeof args !== "object" || args === null) {
+    return false;
+  }
+
+  if (typeof args.taskId !== "string" || args.taskId.length === 0 || args.taskId.length > MAX_TASK_ID_LENGTH) {
+    return false;
+  }
+
+  if (args.status !== undefined && (typeof args.status !== "string" || !isValidTaskStatus(args.status))) {
+    return false;
+  }
+
+  return true;
+}
+
+// Security: Safe error message function to prevent information leakage
+function getSafeErrorMessage(error: any): string {
+  if (error instanceof Error) {
+    // Log full error for debugging but return sanitized message
+    console.error('Full error details:', error);
+    return 'An error occurred while processing your request';
+  }
+  return 'Unknown error occurred';
+}
 
 class TasksServer {
   private server: Server;
@@ -82,6 +187,17 @@ class TasksServer {
     process.on("SIGINT", async () => {
       await this.server.close();
       process.exit(0);
+    });
+
+    // Security: Handle uncaught exceptions
+    process.on('uncaughtException', (error) => {
+      console.error('Uncaught exception:', error);
+      process.exit(1);
+    });
+
+    process.on('unhandledRejection', (reason, promise) => {
+      console.error('Unhandled rejection at:', promise, 'reason:', reason);
+      process.exit(1);
     });
   }
 
@@ -129,7 +245,7 @@ class TasksServer {
         } catch (error) {
           throw new McpError(
             ErrorCode.InternalError,
-            `Tasks API error: ${error}`
+            getSafeErrorMessage(error)
           );
         }
       }
@@ -145,8 +261,16 @@ class TasksServer {
           inputSchema: {
             type: "object",
             properties: {
-              title: { type: "string", description: "Title of the task" },
-              notes: { type: "string", description: "Notes for the task" },
+              title: { 
+                type: "string", 
+                description: "Title of the task",
+                maxLength: MAX_TITLE_LENGTH
+              },
+              notes: { 
+                type: "string", 
+                description: "Notes for the task",
+                maxLength: MAX_NOTES_LENGTH
+              },
             },
             required: ["title"],
           },
@@ -165,7 +289,11 @@ class TasksServer {
           inputSchema: {
             type: "object",
             properties: {
-              taskId: { type: "string", description: "ID of the task to delete" },
+              taskId: { 
+                type: "string", 
+                description: "ID of the task to delete",
+                maxLength: MAX_TASK_ID_LENGTH
+              },
             },
             required: ["taskId"],
           },
@@ -176,8 +304,16 @@ class TasksServer {
           inputSchema: {
             type: "object",
             properties: {
-              taskId: { type: "string", description: "ID of the task to toggle completion status" },
-              status: { type: "string", description: "Status of task, needsAction or completed" },
+              taskId: { 
+                type: "string", 
+                description: "ID of the task to toggle completion status",
+                maxLength: MAX_TASK_ID_LENGTH
+              },
+              status: { 
+                type: "string", 
+                description: "Status of task, needsAction or completed",
+                enum: VALID_TASK_STATUSES
+              },
             },
             required: ["taskId"],
           },
@@ -203,7 +339,7 @@ class TasksServer {
         } catch (error) {
           throw new McpError(
             ErrorCode.InternalError,
-            `Tasks API error: ${error}`
+            getSafeErrorMessage(error)
           );
         }
       }
@@ -212,17 +348,29 @@ class TasksServer {
         if (!isValidCreateTaskArgs(request.params.arguments)) {
           throw new McpError(
             ErrorCode.InvalidParams,
-            "Invalid arguments for creating a task. 'title' must be a string, and 'notes' must be a string or undefined."
+            "Invalid arguments for creating a task. 'title' must be a string (max 256 chars), 'notes' must be a string (max 8192 chars), and 'status' must be 'needsAction' or 'completed'."
           );
         }
         const args = request.params.arguments;
+
+        // Security: Sanitize inputs
+        const sanitizedTitle = sanitizeString(args.title);
+        const sanitizedNotes = args.notes ? sanitizeString(args.notes) : undefined;
+
+        if (!sanitizedTitle) {
+          throw new McpError(
+            ErrorCode.InvalidParams,
+            "Task title cannot be empty after sanitization."
+          );
+        }
     
         try {
           const response = await tasks.tasks.insert({
             tasklist: "@default",
             requestBody: {
-              title: args.title,
-              notes: args.notes,
+              title: sanitizedTitle,
+              notes: sanitizedNotes,
+              status: args.status,
             },
           });
     
@@ -237,26 +385,28 @@ class TasksServer {
         } catch (error) {
           throw new McpError(
             ErrorCode.InternalError,
-            `Tasks API error: ${error}`
+            getSafeErrorMessage(error)
           );
         }
       }
 
       if (request.params.name === "delete_task") {
-        if (!isValidCreateTaskArgs(request.params.arguments)) {
+        if (!isValidDeleteTaskArgs(request.params.arguments)) {
           throw new McpError(
             ErrorCode.InvalidParams,
-            "Invalid arguments for creating a task. 'title' must be a string, and 'notes' must be a string or undefined."
+            "Invalid arguments for deleting a task. 'taskId' must be a non-empty string."
           );
         }
         const args = request.params.arguments;
-        const taskId  = args.taskId;
+        const taskId = sanitizeString(args.taskId);
+
         if (!taskId) {
           throw new McpError(
             ErrorCode.InvalidParams,
-            "The 'taskId' field is required."
+            "Task ID cannot be empty after sanitization."
           );
         }
+
         try {
           await tasks.tasks.delete({
             tasklist: "@default",
@@ -274,32 +424,37 @@ class TasksServer {
         } catch (error) {
           throw new McpError(
             ErrorCode.InternalError,
-            `Tasks API error: ${error}`
+            getSafeErrorMessage(error)
           );
         }
       }
 
       if (request.params.name === "complete_task") {
-
-        if (!isValidCreateTaskArgs(request.params.arguments)) {
+        if (!isValidCompleteTaskArgs(request.params.arguments)) {
           throw new McpError(
             ErrorCode.InvalidParams,
-            "Invalid arguments for creating a task. 'title' must be a string, and 'notes' must be a string or undefined."
+            "Invalid arguments for completing a task. 'taskId' must be a non-empty string and 'status' must be 'needsAction' or 'completed'."
           );
         }
         const args = request.params.arguments;
-        const taskId  = args.taskId;
-        const newStatus  = args.status;
-    
+        const taskId = sanitizeString(args.taskId);
+        const newStatus = args.status || 'completed'; // Default to completed if not specified
+
         if (!taskId) {
           throw new McpError(
             ErrorCode.InvalidParams,
-            "The 'taskId' field is required."
+            "Task ID cannot be empty after sanitization."
+          );
+        }
+
+        if (!isValidTaskStatus(newStatus)) {
+          throw new McpError(
+            ErrorCode.InvalidParams,
+            "Invalid task status. Must be 'needsAction' or 'completed'."
           );
         }
     
         try {
-          // Durumu güncelle
           const updateResponse = await tasks.tasks.patch({
             tasklist: "@default",
             task: taskId,
@@ -317,7 +472,7 @@ class TasksServer {
         } catch (error) {
           throw new McpError(
             ErrorCode.InternalError,
-            `Tasks API error: ${error}`
+            getSafeErrorMessage(error)
           );
         }
       }
