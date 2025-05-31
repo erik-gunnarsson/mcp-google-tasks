@@ -1,4 +1,6 @@
 # Google Tasks MCP Server
+[![smithery badge](https://smithery.ai/badge/@erik-gunnarsson/mcp-google-tasks)](https://smithery.ai/server/@erik-gunnarsson/mcp-google-tasks)
+
 
 A Model Context Protocol (MCP) server for managing Google Tasks.
 
@@ -50,6 +52,14 @@ This TypeScript-based MCP server demonstrates core MCP concepts by integrating w
 ---
 
 ## Usage
+
+### Installing via Smithery
+
+To install mcp-google-tasks for Claude Desktop automatically via [Smithery](https://smithery.ai/server/@erik-gunnarsson/mcp-google-tasks):
+
+```bash
+npx -y @smithery/cli install @erik-gunnarsson/mcp-google-tasks --client claude
+```
 
 ### Running the Server
 To start the server:
